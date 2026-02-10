@@ -1,24 +1,53 @@
-trigger:
-- main  # Define the branch to trigger the pipeline on
-
-pool:
-  vmImage: 'ubuntu-latest'  # Use the latest Ubuntu agent
-
-variables:
-  # Define your environment-specific variables here
-  buildConfiguration: 'production'
-  # Add any other variables you need for deployment, like connection strings, etc.
-
-steps:
-- script: |
-    npm install
-    npm run build-prod
-  displayName: 'Build Angular App'
-
-- task: PublishBuildArtifacts@1
-  inputs:
-    pathtoPublish: '$(Build.SourcesDirectory)/dist'
-    artifactName: 'angular-app'
-  displayName: 'Publish Build Artifacts'
-
-# Add additional steps for deployment here, like deploying to Azure, AWS, or a custom server.
+name: Build and Deploy Angular App
+ 
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+ 
+jobs:
+  build:
+    runs-on: ubuntu-latest
+ 
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+ 
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+ 
+      - name: Install Dependencies
+        run: npm ci
+ 
+      - name: Build Angular App
+        run: npm run build --prod
+ 
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: angular-build
+          path: dist/
+ 
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+ 
+    steps:
+      - name: Download Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: angular-build
+          path: .
+ 
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+ 
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          package: .
