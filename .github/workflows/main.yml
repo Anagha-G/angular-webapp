@@ -5,6 +5,11 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+# REQUIRED for azure/login when it tries OIDC / token exchange
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -25,7 +30,7 @@ jobs:
       - name: Build Angular App
         run: npm run build --prod
 
-      - name: Upload Build Artifact (dist)
+      - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
           name: angular-build
@@ -42,34 +47,38 @@ jobs:
           name: angular-build
           path: dist
 
-      # This step finds the actual folder that contains index.html under dist/
-      # and stores it as an output called "deploy_path"
       - name: Detect Angular build output folder
         id: detect
         shell: bash
         run: |
-          echo "Listing dist contents:"
-          ls -la dist || true
-
-          # Find the first index.html under dist (typical Angular output: dist/<app>/index.html)
           found=$(find dist -maxdepth 3 -type f -name index.html | head -n 1)
-
           if [ -z "$found" ]; then
-            echo "ERROR: index.html not found under dist/. Build output not detected."
+            echo "ERROR: index.html not found under dist/"
             exit 1
           fi
-
           deploy_dir=$(dirname "$found")
-          echo "Detected deploy folder: $deploy_dir"
           echo "deploy_path=$deploy_dir" >> "$GITHUB_OUTPUT"
 
-      - name: Azure Login (Service Principal)
+      # Build the JSON string that azure/login expects for SP+secret auth
+      - name: Create AZURE_CREDENTIALS JSON
+        id: mkcreds
+        shell: bash
+        run: |
+          json=$(printf '{"clientId":"%s","clientSecret":"%s","subscriptionId":"%s","tenantId":"%s"}' \
+            "${{ secrets.AZURE_CLIENT_ID }}" \
+            "${{ secrets.AZURE_CLIENT_SECRET }}" \
+            "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            "${{ secrets.AZURE_TENANT_ID }}")
+          echo "creds=$json" >> "$GITHUB_OUTPUT"
+
+      - name: Azure Login (Service Principal Secret)
         uses: azure/login@v1
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          creds: ${{ steps.mkcreds.outputs.creds }}
+          enable-AzPSSession: false
+          environment: azurecloud
+          allow-no-subscriptions: false
+          auth-type: SERVICE_PRINCIPAL
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
